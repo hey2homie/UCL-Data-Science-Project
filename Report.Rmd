@@ -1,0 +1,532 @@
+---
+title: "Data Analysis Project"
+output:
+  html_document:
+    df_print: paged
+---
+
+In this report, I will analysis dataset of the census dataset extracted from the UC Irvine Machine Learning Repository. My aim in this report is to predict whether the individual's income is greater than 50,000$ based on available predictors in the dataset. Dataset itself contains 48,842 entries with 15 columns of 1994 US census. There is no need to split the dataset into Training and Testing as I can download them from the Website.
+
+### Praparation and Transformation
+
+The first thing to do is to run all necessary libraries:
+
+```{r}
+library(data.table)
+library(MASS)
+library(ggplot2)
+library(corrplot)
+library(Amelia)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(dplyr)
+library(caret)
+library(e1071)
+library(tree)
+library(rpart)
+library(rpart.plot)
+library(cvTools)
+library(randomForest)
+```
+
+Let's load our datasets. Both of them containing missing values which are marked as ' ?'. I can convert them into NA the moment I load them by using. Also, the first row of the Test dataset contains the unnecessary line, and I will omit by it using argument **skip = 1**:
+
+```{r}
+
+set.seed(1)
+
+Training <- read.csv('~/Documents/Programming/UCL/Project/adult.data', header = FALSE, na.strings = ' ?')
+Test <- read.csv('~/Documents/Programming/UCL/Project/adult.test', header = FALSE, na.strings = ' ?', skip = 1)
+```
+
+I start our analysis by transforming the column's names into more readable and understandable for both datasets:
+
+```{r}
+setnames(Training, old = c('V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15'), new = c('Age',  'WorkClass', 'Fnlwgt', 'Education', 'EducationNum', 'MaritalStatus', 'Occupation', 'Relationship', 'Race', 'Sex', 'CapitalGain', 'CapitalLoss', 'Hours', 'NativeCountry', 'AnnualIncome'))
+setnames(Test, old = c('V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15'), new = c('Age', 'WorkClass', 'Fnlwgt', 'Education', 'EducationNum', 'MaritalStatus', 'Occupation', 'Relationship', 'Race', 'Sex', 'CapitalGain', 'CapitalLoss', 'Hours', 'NativeCountry', 'AnnualIncome'))
+```
+
+As it was already established, datasets contain missing values. I can visualize them using function **missmap** from library **Amelia**:
+
+```{r}
+missmap(Training, col = c('yellow', 'black'), legend = TRUE)
+missmap(Test, col = c('yellow', 'black'), legend = TRUE)
+```
+
+Now I can say that the number of rows containing missing values is not significant, and I can omit them using function **drop_na** from library **tidy**:
+
+```{r}
+Training <- drop_na(Training)
+Test <- drop_na(Test)
+```
+
+After I was done with the omitting NAs, I can take a look at the internal structure of the dataset:
+
+```{r}
+str(Training)
+```
+
+According to the table above, the dataset contains the following columns with integers: Age, EducationNum, CapitalGain, CapitalLoss, Hours. I can take a look at correlation matrix of this predictors using function **corrplot** from **corrplot** library.  Also, I would like to include AnnualIncome in my correlation matrix, and to do that I need to change values from factor into integers:
+
+```{r}
+Training$AnnualIncome <- as.numeric(Training$AnnualIncome) - 1
+
+corrplot(cor(Training[, c(1, 3, 5, 11:13, 15)]))
+
+Training$AnnualIncome  <- factor(Training$AnnualIncome , labels = c('<=50K', '>50K'))
+```
+
+I can conclude, that most of the included predictors are not correlating with each other except for the AnnualIncome ~ EducationNum and AnnualIncome ~ Age. So, I would like to remove these predictors to reduce computational time when I will be building models:
+
+```{r}
+Training <- Training[, c(-3, -11, -12)]
+Test <- Test[, c(-3, -11, -12)]
+```
+
+I've decided not to investigate any other relationships as results correlation matrix recommends. Thus, most of the columns in dataset are factors, so it'll be hard to come up with correlation proper plots.
+
+Using function **summary**, we can take a closer look at the information in the dataset:
+
+```{r}
+summary(Training)
+```
+
+### Data Exploration
+
+Now I would like to investigate my dataset. My focus will be on AnnualIncome of different parameters. To achieve this, I'll be using ggplot2 library as I find it's synthesis and the graphics to be way more user-friendly rather than standard functions.
+
+```{r}
+plot2 <- ggplot(Training, aes(x = Education, fill = AnnualIncome)) + geom_bar() + theme_classic() + coord_flip() + # Rotating plot by 90 degrees
+  scale_fill_brewer(palette = 'Greens') + # Setting color scheme
+  scale_y_continuous('Number of Entries', breaks = c(0, 2500, 5000, 7500, 10000)) +
+  ggtitle('Level of Education vs Annual Income') +
+  theme(plot.title = element_text(hjust = 0.5)) # Adjacting plot tittle in the middle
+
+plot3 <- ggplot(Training, aes(x = Race, fill = AnnualIncome)) + geom_bar() + theme_classic() + coord_flip() + 
+  scale_fill_brewer(palette = 'Oranges') +
+  scale_y_continuous('Number of Entries', breaks = c(0, 3000, 25000)) +
+  ggtitle('Race vs Income') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot4 <- ggplot(Training, aes(x = Occupation, fill = AnnualIncome)) + geom_bar() + theme_classic() + coord_flip() + 
+  scale_fill_brewer(palette = 'Reds') + 
+  scale_y_continuous('Number of Entries', breaks = c(1000, 2000, 3000, 4000)) + 
+  ggtitle('Occupation vs Income') + 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+plot5 <- ggplot(Training, aes(x = WorkClass, fill = AnnualIncome)) + geom_bar() + theme_classic() + coord_flip() + 
+  scale_fill_brewer(palette = 'Purples') +
+  scale_y_continuous('Number of Entries', breaks = c(5000, 10000, 15000, 20000)) + 
+  ggtitle('Work-Class  vs Income') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+I would like to display multiple plots at the same time, and to achieve this result **grid.arrange** function from library **gridExtra** will be handy. Also, I've added lines, which indicates a mean age of groups with different AnnualIncome.
+
+```{r}
+grid.arrange(plot4, plot5, ncol = 2)
+grid.arrange(plot2, plot3,  ncol = 2)
+```
+
+I want to use **t.test** function to made a decision whether I should reject the hypothesis that people with annual income greater than 50.000$ on average are older or not.  
+
+```{r}
+t.test(Age ~ AnnualIncome, mu = 0, Training, alternative = 'two.sided', conf.level = 0.95)
+```
+
+The T-test gave me the P-value of 2.2e-16. This means that I can reject the suggested hypothesis. Also, I would like to illustrate the difference of means:
+
+```{r}
+plot1 <- ggplot(Training, aes(x = Age, fill = AnnualIncome)) + geom_bar() + theme_classic() +
+  geom_vline(aes(xintercept = mean(Training$Age[Training$AnnualIncome == ' >50K'])), color = 'Blue', size = 1) + # Creating a line indicating mean age of those, who are making more than 50.000$ annualy
+  geom_vline(aes(xintercept = mean(Training$Age[Training$AnnualIncome == ' <=50K'])), color = 'SkyBlue', size = 1) +
+  scale_fill_brewer(palette = 'Blues') +
+  scale_y_continuous('Number of Entries', breaks = c(0, 250, 500, 750)) +
+  ggtitle('Age vs Income') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot1
+```
+
+### Classification
+
+For solving classification problem, I can use wide range of approaches such as logistic regression, quadratic discriminant analysis, linear discriminant analysis, and K nearest neighbours. Here I would to stick to the logistic regression and build different models. Each of them containing different sets of predictors:
+
+```{r}
+glmModel1 <- glm(AnnualIncome ~ Age, family = binomial, Training)
+
+glmModel2 <- glm(AnnualIncome ~ Age + WorkClass, family = binomial, Training)
+
+glmModel3 <- glm(AnnualIncome ~ Age + WorkClass + EducationNum, family = binomial, Training)
+
+glmModel4 <- glm(AnnualIncome ~ . -Race -Sex, family = binomial, Training)
+
+glmModel5 <- glm(AnnualIncome ~ ., family = binomial, Training)
+```
+
+Let's use our model to make a prediction on Training data. As the fitted values are numbers between 0 and 1, I will transform them into ' >50K' if number is greater than 0.5, otherwise it'll be ' <=50K'.
+
+```{r}
+glmPrediction1 <- predict(glmModel1, newdata = Training, type = 'response')
+
+glmPrediction1 <- ifelse(glmPrediction1 > 0.5, '>50K', '<=50K')
+
+glmPrediction2 <- predict(glmModel2, newdata = Training, type = 'response')
+
+glmPrediction2 <- ifelse(glmPrediction2 > 0.5, '>50K', '<=50K')
+
+glmPrediction3 <- predict(glmModel3, newdata = Training, type = 'response')
+
+glmPrediction3 <- ifelse(glmPrediction3 > 0.5, '>50K', '<=50K')
+
+glmPrediction4 <- predict(glmModel4, newdata = Training, type = 'response')
+
+glmPrediction4 <- ifelse(glmPrediction4 > 0.5, '>50K', '<=50K')
+
+glmPrediction5 <- predict(glmModel5, newdata = Training, type = 'response')
+
+glmPrediction5 <- ifelse(glmPrediction5 > 0.5, '>50K', '<=50K')
+```
+
+Now I can investigate the accuracy of the prediction. I will store this results in the **Classification** variable for the later use. For better perception, here the accuracy will be displayed in percentage.
+
+```{r}
+ClassificationTraining <- c(mean(glmPrediction1 == Training$AnnualIncome),
+                        mean(glmPrediction2 == Training$AnnualIncome),
+                        mean(glmPrediction3 == Training$AnnualIncome),
+                        mean(glmPrediction4 == Training$AnnualIncome),
+                        mean(glmPrediction5 == Training$AnnualIncome))
+
+ClassificationTraining * 100 # Converting into %
+```
+
+The next step will be cross-validating our models. For this purpose, I would like to use 10 fold validation method together with the function train from library **caret** (library **e1071** is required). Argument trControl is responsible for how the train function will act. 
+
+```{r} 
+set.seed(2)
+
+cv_glmModel1 <- train(
+  AnnualIncome ~ Age, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_glmModel1 <- train(
+  AnnualIncome ~ Age, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_glmModel2 <- train(
+  AnnualIncome ~ Age + WorkClass, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_glmModel3 <- train(
+  AnnualIncome ~ Age + WorkClass + EducationNum, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_glmModel4 <- train(
+  AnnualIncome ~. -Race -Sex, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_glmModel5 <- train(
+  AnnualIncome ~ ., 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+```
+
+After running the cross-validation on my Training data, I would like to take a look at the accuracy. The results will be stored in the **ResultCVGlm** variable For this purpose I will use function **resamples** from **caret** library.
+
+```{r}
+ResultCVGlm <- data.frame(summary(resamples(list(model1 = cv_glmModel1, model2 = cv_glmModel2, 
+                                    model3 = cv_glmModel3, model4 = cv_glmModel4,
+                                    model5 = cv_glmModel5)))$statistics$Accuracy)
+
+ResultCVGlm
+```
+
+Later I will compare results with the prediction error for Training data and Test data, but for now I can see that prediction error calculated by 10-k fold cross-validation is worse than prediction error of Training data. As well as in mean accuracy value, I'm interested in standard deviation as I will use it latter for plotting error bars. Also, I would like to change cross-validation method from K-fold to bootstrapping and see the results. To do this, I will just change method in **trainControl**. Results will be stored in **ResultBootGlm**. And like in the step before, I want to store accuracy in the separate variable for later use.
+
+```{r}
+set.seed(3)
+
+cv_glmModel1Boot <- train(
+  AnnualIncome ~ Age, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'boot')
+)
+
+cv_glmModel2Boot <- train(
+  AnnualIncome ~ Age + WorkClass, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'boot')
+)
+
+cv_glmModel3Boot <- train(
+  AnnualIncome ~ Age + WorkClass + EducationNum, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'boot')
+)
+
+cv_glmModel4Boot <- train(
+  AnnualIncome ~. -Race -Sex, 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'boot')
+)
+
+cv_glmModel5Boot <- train(
+  AnnualIncome ~ ., 
+  data = Training, 
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'boot')
+)
+
+ResultBootGlm <- data.frame(summary(resamples(list(model1 = cv_glmModel1Boot, model2 = cv_glmModel2Boot, 
+                                    model3 = cv_glmModel3Boot, model4 = cv_glmModel4Boot,
+                                    model5 = cv_glmModel5Boot)))$statistics$Accuracy)
+
+ResultCVGlm
+```
+
+In the next block of code I would like to predict AnnualIncome for my Test data set using different logistic regression models: 
+
+```{r}
+glmPredictionTest1 <- predict(glmModel1, newdata = Test, type = 'response')
+
+glmPredictionTest1 <- ifelse(glmPredictionTest1 > 0.5, ' >50K.', ' <=50K.')
+
+glmPredictionTest2 <- predict(glmModel2, newdata = Test, type = 'response')
+
+glmPredictionTest2 <- ifelse(glmPredictionTest2 > 0.5,' >50K.', ' <=50K.')
+
+glmPredictionTest3 <- predict(glmModel3, newdata = Test, type = 'response')
+
+glmPredictionTest3 <- ifelse(glmPredictionTest3 > 0.5, ' >50K.', ' <=50K.')
+
+glmPredictionTest4 <- predict(glmModel4, newdata = Test, type = 'response')
+
+glmPredictionTest4 <- ifelse(glmPredictionTest4 > 0.5, ' >50K.', ' <=50K.')
+
+glmPredictionTest5 <- predict(glmModel5, newdata = Test, type = 'response')
+
+glmPredictionTest5 <- ifelse(glmPredictionTest5 > 0.5, ' >50K.', ' <=50K.')
+```
+
+Here I would like to calculate the accuracy of the prediction just like I did the last time and store it in the variable for later use:
+
+```{r}
+ClassificationTest <- c(mean(glmPredictionTest1 == Test$AnnualIncome),
+                        mean(glmPredictionTest2 == Test$AnnualIncome),
+                        mean(glmPredictionTest3 == Test$AnnualIncome),
+                        mean(glmPredictionTest4 == Test$AnnualIncome),
+                        mean(glmPredictionTest5 == Test$AnnualIncome))
+
+ClassificationTest * 100
+
+AccuracyLogistic <- mean(glmPredictionTest4 == Test$AnnualIncome)
+```
+
+The following code is used to create a dataset **ForVisualization**. Vector **ModelsNames** contains names of the used models. Data frame **ResultGlm** contains the accuracy of prediction in Training, K-fold cross-validation, Bootstrapping, and Test. I'm using them together together with another two vectors containing the information about where this numbers come from and values of standard deviation. I've included only standard deviation of K-fold cross-validation and Bootstrapping The values for Training and Test SD are not calculated, and so replaced by the NAs.
+
+```{r}
+ModelsNames <- c('glmModel1', 'glmModel2', 'glmModel3', 'glmModel4', 'glmModel5')
+
+ResultGlm <- data.frame(cbind(ClassificationTraining, ResultCVGlm$Mean, ResultBootGlm$Mean, ClassificationTest))
+
+setnames(ResultGlm, old = c('ClassificationTraining', 'V2', 'V3', 'ClassificationTest'), 
+         new = c('Training', 'K-fold CV', 'Bootstrapping', 'Test'))
+
+ForVisualization <- data.frame(cbind(c(ModelsNames, ModelsNames, ModelsNames), 
+                                     c('Training', 'Training', 'Training', 'Training', 'Training', 'K-fold CV', 
+                                       'K-fold CV', 'K-fold CV', 'K-fold CV', 'K-fold CV', 'Bootstrapping', 'Bootstrapping', 
+                                       'Bootstrapping', 'Bootstrapping', 'Bootstrapping', 'Test', 'Test', 'Test', 'Test', 'Test'), 
+                                     c(ClassificationTraining, ResultCVGlm$Mean, ResultBootGlm$Mean, ClassificationTest), 
+                                     c(NA, NA, NA, NA, NA, cv_glmModel1$results[[4]], cv_glmModel2$results[[4]], cv_glmModel3$results[[4]], 
+                                       cv_glmModel4$results[[4]], cv_glmModel5$results[[4]], cv_glmModel1Boot$results[[4]], 
+                                       cv_glmModel2Boot$results[[4]], cv_glmModel3Boot$results[[4]], cv_glmModel4Boot$results[[4]], 
+                                       cv_glmModel5Boot$results[[4]], NA, NA, NA, NA, NA)))
+
+setnames(ForVisualization, old = c('X1', 'X2', 'X3', 'X4'), new = c('Models', 'Data', 'Mean', 'SD'))
+```
+
+I'm using **str** function to take a look at class of columns:
+
+```{r}
+str(ForVisualization)
+```
+
+As it can be seen, the Mean and SD values are classified as factors. I would like to change them into numeric to use latter to calculate the whiskers borders when I'll be plotting error bars. 
+
+```{r}
+ForVisualization$Mean <- as.numeric(as.character(ForVisualization$Mean))
+ForVisualization$SD <- as.numeric(as.character(ForVisualization$SD))
+```
+
+Next block of code is used to plot the accuracy of different models when we apply them to Training, Test and in cross-validation:
+
+```{r}
+ggplot(ForVisualization, aes(x = Models, y = Mean, group = Data, color = Data)) + 
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), width = .1, position = position_dodge(0.0)) +
+  geom_point(color = 'violetred') + geom_line() + theme_classic() + ggtitle('Accuracy of Models') + 
+  theme(plot.title = element_text(hjust = 0.5)) + scale_color_brewer(palette = 'Paired')
+```
+
+According to the plot, the model containing all available predictors has best performance among the rest four models. Looking at the error bars I can conclude that there is no significant statistical difference between model4 and model5. I would better use model4 as it missing two predictors (Sex and Race) and so require less computational time to be executed.
+
+### Decision Tree Fitting
+
+In this block I will be performing decision tree fitting. I'll be using Pruning and Random Forest methods. Library **cvTools**
+and **tree** are needed for puring. For making tree plots libraries **rpart** and **rpart.plot** are required. I've looked the instraction on how to use **rpart.plot** function in this [manual](link = https://blog.exploratory.io/visualizing-a-decision-tree-using-r-packages-in-explortory-b26d4cb5e71f)
+
+```{r}
+TreeAnnualIncome <- rpart(AnnualIncome ~ ., Training)
+
+rpart.plot(TreeAnnualIncome, type = 2, tweak = 0.6, clip.facs = T, nn = TRUE, gap = 1)
+```
+
+Although there are 11 predictors in the dataset, the tree have been build using only few of them. When we are using function **tree** or, in this case, **rpart** it's automatically choosing the optimal predictors among those mentioned in the formula.
+
+Now I would like to see if I can choose any other set of predictors by using pruning method. During this method we are building the biggest tree possible, and then reducing the number of predictors one at each time.
+
+```{r}
+set.seed(4)
+
+TreeAnnualIncomeAll <- tree(AnnualIncome ~ ., Training[, c(-11)]) # I've deleted column number 11 due to limitation of the function (no more than 32 levels while column has 42)
+
+cvTree <- cv.tree(TreeAnnualIncomeAll)
+
+cvTreeVisualization <- as.data.frame(cbind(c(cvTree$size), c(cvTree$dev), c(cvTree$k)))
+
+setnames(cvTreeVisualization, old = c('V1', 'V2', 'V3'), new = c('Size', 'Deviation', 'K'))
+
+ggplot(cvTreeVisualization, aes(x = Size, y = Deviation))  +
+  geom_point(color = 'violetred') + geom_line() + theme_classic() + ggtitle('Puring the Tree') + 
+  theme(plot.title = element_text(hjust = 0.5)) + scale_color_brewer(palette = 'Paired')
+
+ggplot(cvTreeVisualization, aes(x = K, y = Deviation))  +
+  geom_point(color = 'violetred') + geom_line() + theme_classic() + ggtitle('Puring the Tree') + 
+  theme(plot.title = element_text(hjust = 0.5)) + scale_color_brewer(palette = 'Paired')
+
+```
+
+From the plots above, I can conclude that using this method is not quite effective with my dataset as we can build only the tree with 5 nodes and the model with 5 predictors is still the best available model.
+
+Here I'm making prediction on my Test data and store the accuracy in the variable for later use:
+
+```{r}
+TreePredictionTest <- predict(TreeAnnualIncome, newdata = Test, type = "class")
+
+TreePredictionTest <- ifelse(TreePredictionTest == '>50K', ' >50K.', ' <=50K.')
+
+AccuracyTree <- mean(TreePredictionTest == Test$AnnualIncome)
+```
+
+As well as Pruning Method, I will use Random Forest Method. 
+
+```{r}
+RandomAnnualIncome3 <- randomForest(AnnualIncome ~., Training, mtry = 3, importance = TRUE)
+RandomAnnualIncome4 <- randomForest(AnnualIncome ~., Training, mtry = 4, importance = TRUE)
+RandomAnnualIncome5 <- randomForest(AnnualIncome ~., Training, mtry = 5, importance = TRUE)
+RandomAnnualIncome6 <- randomForest(AnnualIncome ~., Training, mtry = 6, importance = TRUE)
+RandomAnnualIncome7 <- randomForest(AnnualIncome ~., Training, mtry = 7, importance = TRUE)
+```
+
+In the code above, I've created several models with different amount of predictors. 
+
+```{r}
+dataRandom3 <- as.data.frame(RandomAnnualIncome3$err.rate)
+dataRandom4 <- as.data.frame(RandomAnnualIncome4$err.rate)
+dataRandom5 <- as.data.frame(RandomAnnualIncome5$err.rate)
+dataRandom6 <- as.data.frame(RandomAnnualIncome6$err.rate)
+dataRandom7 <- as.data.frame(RandomAnnualIncome7$err.rate)
+```
+
+I've stored the error rate into 5 different datasets, so I can lated use them to create one dataset which I'll use for visualisation. The steps to make dataset are identical to those I've used before.
+
+```{r}
+OOB <- as.data.frame(cbind(c(dataRandom3$OOB, dataRandom4$OOB, dataRandom5$OOB, dataRandom6$OOB, dataRandom7$OOB),
+                           c(rep('3', 500), rep('4', 500), rep('5', 500), rep('6', 500), rep('7', 500)),
+                           c(seq(1, 500), seq(1, 500), seq(1, 500), seq(1, 500), seq(1, 500))))
+
+OOB$V1 <- as.numeric(as.character(OOB$V1))
+OOB$V3 <- as.numeric(as.character(OOB$V3))
+
+setnames(OOB, old = c('V1', 'V2', 'V3'), 
+         new = c('OOB', 'NumberOfPredictors', 'NumberOfTrees'))
+
+ggplot(OOB, aes(x = NumberOfTrees, y = OOB)) + 
+  geom_line(aes(col = NumberOfPredictors), size = 1) + theme_classic() +
+  ggtitle('Choosing Number of Predictors') + 
+  theme(plot.title = element_text(hjust = 0.5)) + xlab('Number of Trees') + labs(colour = 'Number of Predictors')
+
+varImpPlot(RandomAnnualIncome3)
+```
+
+Visualization provides us with information about best performing set of predictors. In my case it's formula with three predictors. Also, important to know which number of trees gives me the lowest OOB. Using this information, I can make build a proper model and make prediction on Test dataset. Another two plots present the most valuable predictors. The provide evidence that the race and native country are not significantly contributing to the model performance. The next block of code will provide me with the prediction and its accuracy. 
+
+```{r}
+RandomBest <- randomForest(AnnualIncome ~., Training, mtry = 3, importance = TRUE, 
+                           ntree = OOB$NumberOfTrees[which.min(OOB$OOB)]) # The best performing number of trees
+
+Test <- rbind(Training[1, ], Test) # I've done this two operations to avoid error when makin a prediction
+Test <- Test[-1, ] # The solution was suggested by Stack Overflow community
+
+RandomPrediction <- predict(RandomBest, newdata = Test,  type = 'class')
+
+RandomPrediction <- ifelse(RandomPrediction == ' >50K', ' >50K.', ' <=50K.')
+
+AccuracyRandom <- mean(RandomPrediction == Test$AnnualIncome)
+```
+
+Now I would like to compare accuracy of different models in percentages. 
+
+```{r}
+FinalResults <- as.data.frame(cbind(c(AccuracyLogistic, AccuracyTree, AccuracyRandom), 
+                                  c('Logistic Regression', 'Prunning', 'Random Forest')))
+
+FinalResults$V1 <- as.numeric(as.character(FinalResults$V1)) * 100
+
+setnames(FinalResults, old = c('V1', 'V2'), new = c('Accuracy', 'Method'))
+
+ggplot(FinalResults, aes(y = Accuracy, x = Method)) + geom_point() + theme_classic() +
+  scale_y_continuous(breaks = c(82.5, 82.9)) +
+  ggtitle('Accuracy of Different Methods in Percentages') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Random Forest is the best performing method among those that I have used for making prediction. 
+
+### Conclusion
+
+In the conclusion I would like to say, that there are still other method that can be used to solve the classification problems that were mentioned before. Due to limitations (mostly time), I had not used Bagging Method and Boosted Decision Tree, that can possible perform better.
+
+As for the code, I can admit that it can be improved by introducing loops and functions that can save time in future by reducing amount of copy-pasting the same pieces of code every time they are required. 
